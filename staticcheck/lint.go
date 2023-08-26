@@ -962,7 +962,7 @@ var checkWaitgroupAddQ = pattern.MustParse(`
 		(CallExpr
 			(FuncLit
 				_
-				call@(CallExpr (Function "(*sync.WaitGroup).Add") _):_) _))`)
+				call@(CallExpr (Symbol "(*sync.WaitGroup).Add") _):_) _))`)
 
 func CheckWaitgroupAdd(pass *analysis.Pass) (interface{}, error) {
 	fn := func(node ast.Node) {
@@ -2170,7 +2170,7 @@ func CheckIneffectiveLoop(pass *analysis.Pass) (interface{}, error) {
 	return nil, nil
 }
 
-var checkNilContextQ = pattern.MustParse(`(CallExpr fun@(Function _) (Builtin "nil"):_)`)
+var checkNilContextQ = pattern.MustParse(`(CallExpr fun@(Symbol _) (Builtin "nil"):_)`)
 
 func CheckNilContext(pass *analysis.Pass) (interface{}, error) {
 	todo := &ast.CallExpr{
@@ -3391,7 +3391,7 @@ func CheckTimerResetReturnValue(pass *analysis.Pass) (interface{}, error) {
 var (
 	checkToLowerToUpperComparisonQ = pattern.MustParse(`
 	(BinaryExpr
-		(CallExpr fun@(Function (Or "strings.ToLower" "strings.ToUpper")) [a])
+		(CallExpr fun@(Symbol (Or "strings.ToLower" "strings.ToUpper")) [a])
  		tok@(Or "==" "!=")
  		(CallExpr fun [b]))`)
 	checkToLowerToUpperComparisonR = pattern.MustParse(`(CallExpr (SelectorExpr (Ident "strings") (Ident "EqualFold")) [a b])`)

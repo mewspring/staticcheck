@@ -1866,6 +1866,10 @@ func (g *Graph) instructions(ctx *context, fn *ir.Function) {
 				// nothing to do
 			case *ir.ConstantSwitch:
 				// nothing to do
+			case *ir.AggregateConst:
+				// nothing to do.
+			case *ir.CompositeValue:
+				// nothing to do.
 			default:
 				panic(fmt.Sprintf("unreachable: %T", instr))
 			}

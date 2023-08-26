@@ -29,6 +29,11 @@ type Map[V any] struct {
 
 func (m *Map[V]) Delete(key types.Type) bool { return m.m.Delete(key) }
 func (m *Map[V]) At(key types.Type) (V, bool) {
+	// NOTE: addad to handle iterator types.
+	if iter, ok := key.(*Iterator); ok {
+		key = iter.Elem()
+	}
+
 	v := m.m.At(key)
 	if v == nil {
 		var zero V
@@ -37,8 +42,15 @@ func (m *Map[V]) At(key types.Type) (V, bool) {
 		return v.(V), true
 	}
 }
-func (m *Map[V]) Set(key types.Type, value V) { m.m.Set(key, value) }
-func (m *Map[V]) Len() int                    { return m.m.Len() }
+func (m *Map[V]) Set(key types.Type, value V) {
+	// NOTE: addad to handle iterator types.
+	if iter, ok := key.(*Iterator); ok {
+		key = iter.Elem()
+	}
+
+	m.m.Set(key, value)
+}
+func (m *Map[V]) Len() int { return m.m.Len() }
 func (m *Map[V]) Iterate(f func(key types.Type, value V)) {
 	ff := func(key types.Type, value interface{}) {
 		f(key, value.(V))

@@ -10,14 +10,40 @@ func (b *builder) buildExits(fn *Function) {
 		case "runtime":
 			switch obj.Name() {
 			case "exit":
-				fn.WillExit = true
+				fn.NoReturn = AlwaysExits
 				return
 			case "throw":
-				fn.WillExit = true
+				fn.NoReturn = AlwaysExits
 				return
 			case "Goexit":
-				fn.WillUnwind = true
+				fn.NoReturn = AlwaysUnwinds
 				return
+			}
+		case "go.uber.org/zap":
+			switch obj.(*types.Func).FullName() {
+			case "(*go.uber.org/zap.Logger).Fatal",
+				"(*go.uber.org/zap.SugaredLogger).Fatal",
+				"(*go.uber.org/zap.SugaredLogger).Fatalw",
+				"(*go.uber.org/zap.SugaredLogger).Fatalf":
+				// Technically, this method does not unconditionally exit
+				// the process. It dynamically calls a function stored in
+				// the logger. If the function is nil, it defaults to
+				// os.Exit.
+				//
+				// The main intent of this method is to terminate the
+				// process, and that's what the vast majority of people
+				// will use it for. We'll happily accept some false
+				// negatives to avoid a lot of false positives.
+				fn.NoReturn = AlwaysExits
+			case "(*go.uber.org/zap.Logger).Panic",
+				"(*go.uber.org/zap.SugaredLogger).Panicw",
+				"(*go.uber.org/zap.SugaredLogger).Panicf":
+				fn.NoReturn = AlwaysUnwinds
+				return
+			case "(*go.uber.org/zap.Logger).DPanic",
+				"(*go.uber.org/zap.SugaredLogger).DPanicf",
+				"(*go.uber.org/zap.SugaredLogger).DPanicw":
+				// These methods will only panic in development.
 			}
 		case "github.com/sirupsen/logrus":
 			switch obj.(*types.Func).FullName() {
@@ -31,7 +57,7 @@ func (b *builder) buildExits(fn *Function) {
 				// process, and that's what the vast majority of people
 				// will use it for. We'll happily accept some false
 				// negatives to avoid a lot of false positives.
-				fn.WillExit = true
+				fn.NoReturn = AlwaysExits
 				return
 			case "(*github.com/sirupsen/logrus.Logger).Panic",
 				"(*github.com/sirupsen/logrus.Logger).Panicf",
@@ -40,7 +66,7 @@ func (b *builder) buildExits(fn *Function) {
 				// These methods will always panic, but that's not
 				// statically known from the code alone, because they
 				// take a detour through the generic Log methods.
-				fn.WillUnwind = true
+				fn.NoReturn = AlwaysUnwinds
 				return
 			case "(*github.com/sirupsen/logrus.Entry).Panicf",
 				"(*github.com/sirupsen/logrus.Entry).Panicln":
@@ -48,20 +74,57 @@ func (b *builder) buildExits(fn *Function) {
 				// Entry.Panic has an explicit panic, but Panicf and
 				// Panicln do not, relying fully on the generic Log
 				// method.
-				fn.WillUnwind = true
+				fn.NoReturn = AlwaysUnwinds
 				return
 			case "(*github.com/sirupsen/logrus.Logger).Log",
 				"(*github.com/sirupsen/logrus.Logger).Logf",
 				"(*github.com/sirupsen/logrus.Logger).Logln":
-				// TODO(dh): we cannot handle these case. Whether they
+				// TODO(dh): we cannot handle these cases. Whether they
 				// exit or unwind depends on the level, which is set
 				// via the first argument. We don't currently support
 				// call-site-specific exit information.
 			}
+		case "github.com/golang/glog":
+			switch obj.(*types.Func).FullName() {
+			case "github.com/golang/glog.Exit",
+				"github.com/golang/glog.ExitDepth",
+				"github.com/golang/glog.Exitf",
+				"github.com/golang/glog.Exitln",
+				"github.com/golang/glog.Fatal",
+				"github.com/golang/glog.FatalDepth",
+				"github.com/golang/glog.Fatalf",
+				"github.com/golang/glog.Fatalln":
+				// all of these call os.Exit after logging
+				fn.NoReturn = AlwaysExits
+			}
+		case "k8s.io/klog":
+			switch obj.(*types.Func).FullName() {
+			case "k8s.io/klog.Exit",
+				"k8s.io/klog.ExitDepth",
+				"k8s.io/klog.Exitf",
+				"k8s.io/klog.Exitln",
+				"k8s.io/klog.Fatal",
+				"k8s.io/klog.FatalDepth",
+				"k8s.io/klog.Fatalf",
+				"k8s.io/klog.Fatalln":
+				// all of these call os.Exit after logging
+				fn.NoReturn = AlwaysExits
+			}
+		case "k8s.io/klog/v2":
+			switch obj.(*types.Func).FullName() {
+			case "k8s.io/klog/v2.Exit",
+				"k8s.io/klog/v2.ExitDepth",
+				"k8s.io/klog/v2.Exitf",
+				"k8s.io/klog/v2.Exitln",
+				"k8s.io/klog/v2.Fatal",
+				"k8s.io/klog/v2.FatalDepth",
+				"k8s.io/klog/v2.Fatalf",
+				"k8s.io/klog/v2.Fatalln":
+				// all of these call os.Exit after logging
+				fn.NoReturn = AlwaysExits
+			}
 		}
 	}
-
-	buildDomTree(fn)
 
 	isRecoverCall := func(instr Instruction) bool {
 		if instr, ok := instr.(*Call); ok {
@@ -74,66 +137,54 @@ func (b *builder) buildExits(fn *Function) {
 		return false
 	}
 
-	// All panics branch to the exit block, which means that if every
-	// possible path through the function panics, then all
-	// predecessors of the exit block must panic.
-	willPanic := true
-	for _, pred := range fn.Exit.Preds {
-		if _, ok := pred.Control().(*Panic); !ok {
-			willPanic = false
-		}
-	}
-	if willPanic {
-		recovers := false
-	recoverLoop:
-		for _, u := range fn.Blocks {
-			for _, instr := range u.Instrs {
-				if instr, ok := instr.(*Defer); ok {
-					call := instr.Call.StaticCallee()
-					if call == nil {
-						// not a static call, so we can't be sure the
-						// deferred call isn't calling recover
-						recovers = true
-						break recoverLoop
-					}
-					if len(call.Blocks) == 0 {
-						// external function, we don't know what's
-						// happening inside it
-						//
-						// TODO(dh): this includes functions from
-						// imported packages, due to how go/analysis
-						// works. We could introduce another fact,
-						// like we've done for exiting and unwinding,
-						// but it doesn't seem worth it. Virtually all
-						// uses of recover will be in closures.
-						recovers = true
-						break recoverLoop
-					}
-					for _, y := range call.Blocks {
-						for _, instr2 := range y.Instrs {
-							if isRecoverCall(instr2) {
-								recovers = true
-								break recoverLoop
-							}
+	both := NewBlockSet(len(fn.Blocks))
+	exits := NewBlockSet(len(fn.Blocks))
+	unwinds := NewBlockSet(len(fn.Blocks))
+	recovers := false
+	for _, u := range fn.Blocks {
+		for _, instr := range u.Instrs {
+		instrSwitch:
+			switch instr := instr.(type) {
+			case *Defer:
+				if recovers {
+					// avoid doing extra work, we already know that this function calls recover
+					continue
+				}
+				call := instr.Call.StaticCallee()
+				if call == nil {
+					// not a static call, so we can't be sure the
+					// deferred call isn't calling recover
+					recovers = true
+					break
+				}
+				if call.Package() == fn.Package() {
+					b.buildFunction(call)
+				}
+				if len(call.Blocks) == 0 {
+					// external function, we don't know what's
+					// happening inside it
+					//
+					// TODO(dh): this includes functions from
+					// imported packages, due to how go/analysis
+					// works. We could introduce another fact,
+					// like we've done for exiting and unwinding.
+					recovers = true
+					break
+				}
+				for _, y := range call.Blocks {
+					for _, instr2 := range y.Instrs {
+						if isRecoverCall(instr2) {
+							recovers = true
+							break instrSwitch
 						}
 					}
 				}
-			}
-		}
-		if !recovers {
-			fn.WillUnwind = true
-			return
-		}
-	}
 
-	// TODO(dh): don't check that any specific call dominates the exit
-	// block. instead, check that all calls combined cover every
-	// possible path through the function.
-	exits := NewBlockSet(len(fn.Blocks))
-	unwinds := NewBlockSet(len(fn.Blocks))
-	for _, u := range fn.Blocks {
-		for _, instr := range u.Instrs {
-			if instr, ok := instr.(CallInstruction); ok {
+			case *Panic:
+				both.Add(u)
+				unwinds.Add(u)
+
+			case CallInstruction:
 				switch instr.(type) {
 				case *Defer, *Call:
 				default:
@@ -162,19 +213,15 @@ func (b *builder) buildExits(fn *Function) {
 				if call.Package() == fn.Package() {
 					b.buildFunction(call)
 				}
-				dom := u.Dominates(fn.Exit)
-				if call.WillExit {
-					if dom {
-						fn.WillExit = true
-						return
-					}
+				switch call.NoReturn {
+				case AlwaysExits:
+					both.Add(u)
 					exits.Add(u)
-				} else if call.WillUnwind {
-					if dom {
-						fn.WillUnwind = true
-						return
-					}
+				case AlwaysUnwinds:
+					both.Add(u)
 					unwinds.Add(u)
+				case NeverReturns:
+					both.Add(u)
 				}
 			}
 		}
@@ -202,24 +249,38 @@ func (b *builder) buildExits(fn *Function) {
 		}
 		return false
 	}
-
-	if exits.Num() > 0 {
-		if !findPath(fn.Blocks[0], exits) {
-			fn.WillExit = true
-			return
+	findPathEntry := func(root *BasicBlock, bl *BlockSet) bool {
+		if bl.Num() == 0 {
+			return true
 		}
-	}
-	if unwinds.Num() > 0 {
 		seen.Clear()
-		if !findPath(fn.Blocks[0], unwinds) {
-			fn.WillUnwind = true
-			return
+		return findPath(root, bl)
+	}
+
+	if !findPathEntry(fn.Blocks[0], exits) {
+		fn.NoReturn = AlwaysExits
+	} else if !recovers {
+		// Only consider unwinding and "never returns" if we don't
+		// call recover. If we do call recover, then panics don't
+		// bubble up the stack.
+
+		// TODO(dh): the position of the defer matters. If we
+		// unconditionally terminate before we defer a recover, then
+		// the recover is ineffective.
+
+		if !findPathEntry(fn.Blocks[0], unwinds) {
+			fn.NoReturn = AlwaysUnwinds
+		} else if !findPathEntry(fn.Blocks[0], both) {
+			fn.NoReturn = NeverReturns
 		}
 	}
 }
 
 func (b *builder) addUnreachables(fn *Function) {
+	var unreachable *BasicBlock
+
 	for _, bb := range fn.Blocks {
+	instrLoop:
 		for i, instr := range bb.Instrs {
 			if instr, ok := instr.(*Call); ok {
 				var call *Function
@@ -236,7 +297,8 @@ func (b *builder) addUnreachables(fn *Function) {
 					// make sure we have information on all functions in this package
 					b.buildFunction(call)
 				}
-				if call.WillExit {
+				switch call.NoReturn {
+				case AlwaysExits:
 					// This call will cause the process to terminate.
 					// Remove remaining instructions in the block and
 					// replace any control flow with Unreachable.
@@ -248,8 +310,9 @@ func (b *builder) addUnreachables(fn *Function) {
 					bb.Instrs = bb.Instrs[:i+1]
 					bb.emit(new(Unreachable), instr.Source())
 					addEdge(bb, fn.Exit)
-					break
-				} else if call.WillUnwind {
+					break instrLoop
+
+				case AlwaysUnwinds:
 					// This call will cause the goroutine to terminate
 					// and defers to run (i.e. a panic or
 					// runtime.Goexit). Remove remaining instructions
@@ -263,7 +326,42 @@ func (b *builder) addUnreachables(fn *Function) {
 					bb.Instrs = bb.Instrs[:i+1]
 					bb.emit(new(Jump), instr.Source())
 					addEdge(bb, fn.Exit)
-					break
+					break instrLoop
+
+				case NeverReturns:
+					// This call will either cause the goroutine to
+					// terminate, or the process to terminate. Remove
+					// remaining instructions in the block and replace
+					// any control flow with a conditional jump to
+					// either the exit block, or Unreachable.
+					for _, succ := range bb.Succs {
+						succ.removePred(bb)
+					}
+					bb.Succs = bb.Succs[:0]
+
+					bb.Instrs = bb.Instrs[:i+1]
+					var c Call
+					c.Call.Value = &Builtin{
+						name: "ir:noreturnWasPanic",
+						sig: types.NewSignatureType(nil, nil, nil,
+							types.NewTuple(),
+							types.NewTuple(anonVar(types.Typ[types.Bool])),
+							false,
+						),
+					}
+					c.setType(types.Typ[types.Bool])
+
+					if unreachable == nil {
+						unreachable = fn.newBasicBlock("unreachable")
+						unreachable.emit(&Unreachable{}, nil)
+						addEdge(unreachable, fn.Exit)
+					}
+
+					bb.emit(&c, instr.Source())
+					bb.emit(&If{Cond: &c}, instr.Source())
+					addEdge(bb, fn.Exit)
+					addEdge(bb, unreachable)
+					break instrLoop
 				}
 			}
 		}

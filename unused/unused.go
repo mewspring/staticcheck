@@ -579,7 +579,7 @@ func (c *Checker) results() []types.Object {
 		var notIfaces []types.Type
 
 		// implement as many interfaces as possible
-		c.graph.seenTypes.Iterate(func(t types.Type, _ interface{}) {
+		c.graph.seenTypes.Iterate(func(t types.Type, _ struct{}) {
 			switch t := t.(type) {
 			case *types.Interface:
 				if t.NumMethods() > 0 {
@@ -641,8 +641,8 @@ func (c *Checker) results() []types.Object {
 		for _, v := range c.graph.Nodes {
 			debugNode(v)
 		}
-		c.graph.TypeNodes.Iterate(func(key types.Type, value interface{}) {
-			debugNode(value.(*Node))
+		c.graph.TypeNodes.Iterate(func(key types.Type, value *Node) {
+			debugNode(value)
 		})
 
 		c.debugf("}\n")
@@ -657,8 +657,8 @@ func (c *Checker) results() []types.Object {
 	for _, v := range c.graph.Nodes {
 		c.graph.quieten(v)
 	}
-	c.graph.TypeNodes.Iterate(func(_ types.Type, value interface{}) {
-		c.graph.quieten(value.(*Node))
+	c.graph.TypeNodes.Iterate(func(_ types.Type, value *Node) {
+		c.graph.quieten(value)
 	})
 
 	report := func(node *Node) {
@@ -689,8 +689,8 @@ func (c *Checker) results() []types.Object {
 	for _, v := range c.graph.Nodes {
 		report(v)
 	}
-	c.graph.TypeNodes.Iterate(func(_ types.Type, value interface{}) {
-		report(value.(*Node))
+	c.graph.TypeNodes.Iterate(func(_ types.Type, value *Node) {
+		report(value)
 	})
 
 	return out
@@ -775,14 +775,14 @@ type Graph struct {
 	// Safe for concurrent use
 	fset      *token.FileSet
 	Root      *Node
-	seenTypes typeutil.Map
+	seenTypes typeutil.Map[struct{}]
 
 	// read-only
 	wholeProgram bool
 
 	// need synchronisation
 	mu        sync.Mutex
-	TypeNodes typeutil.Map
+	TypeNodes typeutil.Map[*Node]
 	Nodes     map[interface{}]*Node
 	objNodes  map[objNodeKey]*Node
 }
@@ -791,7 +791,7 @@ type context struct {
 	g           *Graph
 	pkg         *pkg
 	seenFns     map[string]struct{}
-	seenTypes   *typeutil.Map
+	seenTypes   *typeutil.Map[struct{}]
 	nodeCounter uint64
 }
 
@@ -854,8 +854,8 @@ func (g *Graph) node(ctx *context, obj interface{}) (node *Node, new bool) {
 	defer g.mu.Unlock()
 	switch obj := obj.(type) {
 	case types.Type:
-		if v := g.TypeNodes.At(obj); v != nil {
-			return v.(*Node), false
+		if v, ok := g.TypeNodes.At(obj); ok {
+			return v, false
 		}
 		node := g.newNode(ctx, obj)
 		g.TypeNodes.Set(obj, node)
@@ -1060,7 +1060,7 @@ func (g *Graph) entry(pkg *pkg) {
 	if g.wholeProgram {
 		ctx.seenTypes = &g.seenTypes
 	} else {
-		ctx.seenTypes = &typeutil.Map{}
+		ctx.seenTypes = &typeutil.Map[struct{}]{}
 	}
 
 	scopes := map[*types.Scope]*ir.Function{}
@@ -1365,7 +1365,7 @@ func (g *Graph) entry(pkg *pkg) {
 		var ifaces []*types.Interface
 		var notIfaces []types.Type
 
-		ctx.seenTypes.Iterate(func(t types.Type, _ interface{}) {
+		ctx.seenTypes.Iterate(func(t types.Type, _ struct{}) {
 			switch t := t.(type) {
 			case *types.Interface:
 				// OPT(dh): (8.1) we only need interfaces that have unexported methods
@@ -1446,7 +1446,7 @@ func (g *Graph) typ(ctx *context, t types.Type, parent types.Type) {
 	if g.wholeProgram {
 		g.mu.Lock()
 	}
-	if ctx.seenTypes.At(t) != nil {
+	if _, ok := ctx.seenTypes.At(t); ok {
 		if g.wholeProgram {
 			g.mu.Unlock()
 		}

@@ -15,6 +15,7 @@ import (
 	"honnef.co/go/tools/code"
 	"honnef.co/go/tools/config"
 	"honnef.co/go/tools/edit"
+	"honnef.co/go/tools/go/types/typeutil"
 	"honnef.co/go/tools/internal/passes/buildir"
 	"honnef.co/go/tools/ir"
 	. "honnef.co/go/tools/lint/lintdsl"
@@ -24,7 +25,6 @@ import (
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
 	"golang.org/x/tools/go/ast/inspector"
-	"golang.org/x/tools/go/types/typeutil"
 )
 
 func CheckPackageComment(pass *analysis.Pass) (interface{}, error) {
@@ -233,19 +233,19 @@ fnLoop:
 // types do not return unexported types.
 func CheckUnexportedReturn(pass *analysis.Pass) (interface{}, error) {
 	for _, fn := range pass.ResultOf[buildir.Analyzer].(*buildir.IR).SrcFuncs {
-		if fn.Synthetic != "" || fn.Parent() != nil {
+		if fn.Synthetic != 0 || fn.Parent() != nil {
 			continue
 		}
 		if !ast.IsExported(fn.Name()) || code.IsMain(pass) || code.IsInTest(pass, fn) {
 			continue
 		}
 		sig := fn.Type().(*types.Signature)
-		if sig.Recv() != nil && !ast.IsExported(code.Dereference(sig.Recv().Type()).(*types.Named).Obj().Name()) {
+		if sig.Recv() != nil && !ast.IsExported(typeutil.Dereference(sig.Recv().Type()).(*types.Named).Obj().Name()) {
 			continue
 		}
 		res := sig.Results()
 		for i := 0; i < res.Len(); i++ {
-			if named, ok := code.DereferenceR(res.At(i).Type()).(*types.Named); ok &&
+			if named, ok := typeutil.DereferenceR(res.At(i).Type()).(*types.Named); ok &&
 				!ast.IsExported(named.Obj().Name()) &&
 				named != types.Universe.Lookup("error").Type() {
 				report.Report(pass, fn, "should not return unexported type")
@@ -325,7 +325,7 @@ func CheckContextFirstArg(pass *analysis.Pass) (interface{}, error) {
 	// 	func helperCommandContext(t *testing.T, ctx context.Context, s ...string) (cmd *exec.Cmd) {
 fnLoop:
 	for _, fn := range pass.ResultOf[buildir.Analyzer].(*buildir.IR).SrcFuncs {
-		if fn.Synthetic != "" || fn.Parent() != nil {
+		if fn.Synthetic != 0 || fn.Parent() != nil {
 			continue
 		}
 		params := fn.Signature.Params()

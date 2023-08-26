@@ -15,13 +15,18 @@ import (
 	"os"
 	"sync"
 
-	"golang.org/x/tools/go/types/typeutil"
+	"honnef.co/go/tools/go/types/typeutil"
 )
+
+// measured on the standard library and rounded up to powers of two,
+// on average there are 8 blocks and 16 instructions per block in a
+// function.
+const avgBlocks = 8
+const avgInstructionsPerBlock = 16
 
 // NewProgram returns a new IR Program.
 //
 // mode controls diagnostics and checking during IR construction.
-//
 func NewProgram(fset *token.FileSet, mode BuilderMode) *Program {
 	prog := &Program{
 		Fset:     fset,
@@ -45,7 +50,6 @@ func NewProgram(fset *token.FileSet, mode BuilderMode) *Program {
 // For objects from Go source code, syntax is the associated syntax
 // tree (for funcs and vars only); it will be used during the build
 // phase.
-//
 func memberFromObject(pkg *Package, obj types.Object, syntax ast.Node) {
 	name := obj.Name()
 	switch obj := obj.(type) {
@@ -96,9 +100,16 @@ func memberFromObject(pkg *Package, obj types.Object, syntax ast.Node) {
 		fn.source = syntax
 		fn.initHTML(pkg.printFunc)
 		if syntax == nil {
-			fn.Synthetic = "loaded from gc object file"
+			fn.Synthetic = SyntheticLoadedFromExportData
 		} else {
-			fn.functionBody = new(functionBody)
+			// Note: we initialize fn.Blocks in
+			// (*builder).buildFunction and not here because Blocks
+			// being nil is used to indicate that building of the
+			// function hasn't started yet.
+
+			fn.functionBody = &functionBody{
+				scratchInstructions: make([]Instruction, avgBlocks*avgInstructionsPerBlock),
+			}
 		}
 
 		pkg.values[obj] = fn
@@ -115,7 +126,6 @@ func memberFromObject(pkg *Package, obj types.Object, syntax ast.Node) {
 // membersFromDecl populates package pkg with members for each
 // typechecker object (var, func, const or type) associated with the
 // specified decl.
-//
 func membersFromDecl(pkg *Package, decl ast.Decl) {
 	switch decl := decl.(type) {
 	case *ast.GenDecl: // import, const, type or var
@@ -164,7 +174,6 @@ func membersFromDecl(pkg *Package, decl ast.Decl) {
 //
 // The real work of building IR form for each function is not done
 // until a subsequent call to Package.Build().
-//
 func (prog *Program) CreatePackage(pkg *types.Package, files []*ast.File, info *types.Info, importable bool) *Package {
 	p := &Package{
 		Prog:      prog,
@@ -180,7 +189,7 @@ func (prog *Program) CreatePackage(pkg *types.Package, files []*ast.File, info *
 	p.init = &Function{
 		name:         "init",
 		Signature:    new(types.Signature),
-		Synthetic:    "package initializer",
+		Synthetic:    SyntheticPackageInitializer,
 		Pkg:          p,
 		Prog:         prog,
 		functionBody: new(functionBody),
@@ -247,7 +256,6 @@ var printMu sync.Mutex
 
 // AllPackages returns a new slice containing all packages in the
 // program prog in unspecified order.
-//
 func (prog *Program) AllPackages() []*Package {
 	pkgs := make([]*Package, 0, len(prog.packages))
 	for _, pkg := range prog.packages {
@@ -269,7 +277,6 @@ func (prog *Program) AllPackages() []*Package {
 // false---yet this function remains very convenient.
 // Clients should use (*Program).Package instead where possible.
 // IR doesn't really need a string-keyed map of packages.
-//
 func (prog *Program) ImportedPackage(path string) *Package {
 	return prog.imported[path]
 }

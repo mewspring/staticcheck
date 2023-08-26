@@ -12,16 +12,17 @@ import (
 	"sort"
 	"strings"
 
-	"golang.org/x/tools/go/analysis"
-	"golang.org/x/tools/go/types/typeutil"
 	. "honnef.co/go/tools/arg"
 	"honnef.co/go/tools/code"
 	"honnef.co/go/tools/edit"
+	"honnef.co/go/tools/go/types/typeutil"
 	"honnef.co/go/tools/internal/passes/buildir"
 	"honnef.co/go/tools/internal/sharedcheck"
 	. "honnef.co/go/tools/lint/lintdsl"
 	"honnef.co/go/tools/pattern"
 	"honnef.co/go/tools/report"
+
+	"golang.org/x/tools/go/analysis"
 )
 
 var (

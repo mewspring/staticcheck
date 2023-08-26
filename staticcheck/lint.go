@@ -24,6 +24,7 @@ import (
 	"honnef.co/go/tools/edit"
 	"honnef.co/go/tools/facts"
 	"honnef.co/go/tools/functions"
+	"honnef.co/go/tools/go/types/typeutil"
 	"honnef.co/go/tools/internal/passes/buildir"
 	"honnef.co/go/tools/internal/sharedcheck"
 	"honnef.co/go/tools/ir"
@@ -38,7 +39,6 @@ import (
 	"golang.org/x/tools/go/analysis/passes/inspect"
 	"golang.org/x/tools/go/ast/astutil"
 	"golang.org/x/tools/go/ast/inspector"
-	"golang.org/x/tools/go/types/typeutil"
 )
 
 func checkSortSlice(call *Call) {

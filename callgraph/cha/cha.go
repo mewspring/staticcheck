@@ -20,21 +20,19 @@
 // Since CHA conservatively assumes that all functions are address-taken
 // and all concrete types are put into interfaces, it is sound to run on
 // partial programs, such as libraries without a main or test function.
-//
 package cha // import "honnef.co/go/tools/callgraph/cha"
 
 import (
 	"go/types"
 
-	"golang.org/x/tools/go/types/typeutil"
 	"honnef.co/go/tools/callgraph"
+	"honnef.co/go/tools/go/types/typeutil"
 	"honnef.co/go/tools/ir"
 	"honnef.co/go/tools/ir/irutil"
 )
 
 // CallGraph computes the call graph of the specified program using the
 // Class Hierarchy Analysis algorithm.
-//
 func CallGraph(prog *ir.Program) *callgraph.Graph {
 	cg := callgraph.New(nil) // TODO(adonovan) eliminate concept of rooted callgraph
 

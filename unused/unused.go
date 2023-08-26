@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"go/types"
 	"io"
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1609,6 +1610,9 @@ func (g *Graph) typ(ctx *context, t types.Type, parent types.Type) {
 			ctx.seeAndUse(t.At(i).Type(), t, edgeTupleElement|edgeType)
 			g.typ(ctx, t.At(i).Type(), nil)
 		}
+	case *types.TypeParam:
+		// TODO: figure out how to handle type parameter.
+		log.Printf("TODO: figure out how to handle type parameter")
 	default:
 		panic(fmt.Sprintf("unreachable: %T", t))
 	}
